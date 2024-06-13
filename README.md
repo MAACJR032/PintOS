@@ -29,5 +29,5 @@ não precisa nem no `make check` do src/threads/build (se der algum erro oque fo
 
 
 Equipe:
-| [<img src="https://avatars.githubusercontent.com/u/96800329?v=4" width=115><br><sub>Luiz Gustavo</sub>](https://github.com/Zed201) |  [<img src="https://avatars.githubusercontent.com/u/101292201?v=4" width=115><br><sub>Heitor Melo</sub>](https://github.com/HeitorMelo)  | [<img src="https://avatars.githubusercontent.com/u/129231720?v=4" width=115><br><sub>Henrique César</sub>](https://github.com/SapoSopa) | [<img src="https://avatars.githubusercontent.com/u/136932932?v=4" width=115><br><sub>Emanuelle Giovanna</sub>](https://github.com/manugio3)
+| [<img src="https://avatars.githubusercontent.com/u/123107373?s=400&v=4><br><sub>Mácio</sub>](https://github.com/MAACJR032) |  [<img src="https://avatars.githubusercontent.com/u/98539736?v=4><br><sub>Jambis</sub>](https://github.com/jambis-prg)  | [<img src="https://avatars.githubusercontent.com/u/161069298?v=4><br><sub>Black Sardes</sub>](https://github.com/BlackSardes) | [<img src="https://avatars.githubusercontent.com/u/162517004?v=4><br><sub>Emanuelle Giovanna</sub>](https://github.com/gjcms)
 | :---: | :---: | :--:| :--:|
