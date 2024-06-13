@@ -16,7 +16,7 @@ não precisa nem no `make check` do src/threads/build (se der algum erro oque fo
 <details>
     <summary>Alarm</summary>
     Reimplementar ` timer_sleep()` no `device/time.c` que ta originalmente implementado com 'busy wait',
-    que fica chamando `thread_yiel()` enquanto o tempo não tiver passado
+    que fica chamando `thread_yield()` enquanto o tempo não tiver passado
     ideia:
     Adicionar a verificação ao scheduler, adicionando um campo na struct de threads para indicar o tempo que ela deve ficar parada se tiver com status de blocking
 </details>
