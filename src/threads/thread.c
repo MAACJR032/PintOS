@@ -62,7 +62,7 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
-static int64_t ticks;
+static int64_t ticks = 0;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -96,6 +96,7 @@ thread_init (void)
 
   lock_init (&tid_lock);
   list_init (&ready_list);
+  list_init (&yield_block_list);
   list_init (&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -327,8 +328,6 @@ thread_yield (void)
 
 void thread_yield_block(int64_t tick_to_wake_up)
 {
-    if(tick_to_wake_up <= 0) return;
-
     struct thread *cur = thread_current ();
     enum intr_level old_level;
     
@@ -633,7 +632,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);

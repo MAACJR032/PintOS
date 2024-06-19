@@ -93,6 +93,8 @@ timer_sleep (int64_t ticks)
 
     ASSERT (intr_get_level() == INTR_ON);
 
+    if(ticks <= 0) return;
+
     /* Colocar na lista de threads bloqueada, após passar a qtd de tick, acorda as threads
        O tempo para acordar é o tempo atual + o tempo de espera
     */
