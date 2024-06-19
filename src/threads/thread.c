@@ -13,17 +13,19 @@
 #include "threads/vaddr.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "thread.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
-#define A 55
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
+
+static struct list yield_block_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -59,6 +61,8 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+
+static int64_t ticks;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -125,6 +129,7 @@ thread_tick (void)
 {
   /* Calcular o load average*/
   /* Verificar se passou o time slice (4 ticks) e atualiza as prioridades */
+    ticks++;
 
     struct thread *t = thread_current();
 
@@ -320,8 +325,28 @@ thread_yield (void)
     intr_set_level (old_level);
 }
 
+void thread_yield_block(int64_t tick_to_wake_up)
+{
+    if(tick_to_wake_up <= 0) return;
+
+    struct thread *cur = thread_current ();
+    enum intr_level old_level;
+    
+    ASSERT (!intr_context ());
+
+    old_level = intr_disable ();
+    if (cur != idle_thread) 
+    {
+        cur->tick_to_wake_up = tick_to_wake_up;
+        list_push_back (&yield_block_list, &cur->elem);
+    }
+    cur->status = THREAD_BLOCKED;
+    schedule ();
+    intr_set_level (old_level);
+}
+
 /* Invoke function 'func' on all threads, passing along 'aux'.
-   This function must be called with interrupts off. */
+    This function must be called with interrupts off. */
 void
 thread_foreach (thread_action_func *func, void *aux)
 {
@@ -498,6 +523,21 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
+  for (struct list_elem *e = list_begin (&yield_block_list); e != list_end (&yield_block_list); e = list_next (e))
+  {
+      struct thread *t = list_entry (e, struct thread, elem);
+
+      if(ticks >= t->tick_to_wake_up)
+      {
+        e = list_remove(e); // e = e->next; e recebe o proximo elemento depois do elemento removido
+        e = list_prev(e); // e = e->prev; e recebe o elemento anterior do elemento removido
+
+        ASSERT (t->status == THREAD_BLOCKED);
+        list_push_back (&ready_list, &t->elem);
+        t->status = THREAD_READY;
+      }
+  }
+
   if (list_empty (&ready_list))
     return idle_thread;
   else
@@ -561,10 +601,12 @@ static void
 schedule (void) 
 {
   struct thread *cur = running_thread ();
+  
+  ASSERT (intr_get_level () == INTR_OFF);
+  
   struct thread *next = next_thread_to_run ();
   struct thread *prev = NULL;
 
-  ASSERT (intr_get_level () == INTR_OFF);
   /* TODO:
    * Ver de usar o thread_block, mas para o schedule 
    * tem de verificar se uma thread esta bloqueada, alem de implementar 

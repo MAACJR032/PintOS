@@ -97,8 +97,11 @@ timer_sleep (int64_t ticks)
        O tempo para acordar é o tempo atual + o tempo de espera
     */
 
+    /*
     while (timer_elapsed (start) < ticks) // Se o tempo que passou for menor que o de ticks
       thread_yield();
+    */
+    thread_yield_block(start + ticks);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
