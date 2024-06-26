@@ -90,6 +90,7 @@ struct thread
    int64_t tick_to_wake_up;            /* start + sleepTime */
    int priority;                       /* Priority. */
    int nice;
+   int recent_cpu_time;
 
    /* Shared between thread.c and synch.c. */
    struct list_elem elem;              /* List element. */

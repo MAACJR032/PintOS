@@ -58,12 +58,16 @@ static long long user_ticks;    /* # of timer ticks in user programs. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
 static unsigned thread_ticks;   /* # of timer ticks since last yield. */
 
+#define TIMER_FREQ 100
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
 static int64_t ticks = 0;
+
+static int system_load_avg = 0;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -76,6 +80,9 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+static void thread_recalc_cpu_time(struct thread *t, void *aux UNUSED);
+static void thread_recalc_priority(struct thread *t);
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -133,8 +140,28 @@ thread_tick (void)
     /* Calcular o load average*/
     /* Verificar se passou o time slice (4 ticks) e atualiza as prioridades */
     ticks++;
-
     struct thread *t = thread_current();
+
+    t->recent_cpu_time = FLOAT_ADD_MIX(t->recent_cpu_time, 1);
+
+    if (ticks % TIMER_FREQ == 0)
+    {
+        int sum = 0;
+        if(t != idle_thread)
+            sum = 1;
+
+        int t0 = FLOAT_DIV_MIX(FLOAT_CONST(59), 60);
+        int t1 = FLOAT_MULT(t0, system_load_avg);
+
+        int t2 = FLOAT_DIV_MIX(FLOAT_CONST(1), 60);
+        int t3 = FLOAT_MULT_MIX(t2, (list_size(&ready_list) + sum));
+
+        //printf("T0 = %d T1 = %d T2 = %d T3 = %d\n", t0, t1, t2, t3);
+        system_load_avg = FLOAT_ADD(t1, t3);
+
+        thread_foreach(thread_recalc_cpu_time, NULL);
+    }
+
 
     /* Update statistics. */
     if (t == idle_thread)
@@ -146,6 +173,7 @@ thread_tick (void)
 #endif
     else
         kernel_ticks++;
+
 
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE)
@@ -379,7 +407,9 @@ thread_set_nice (int nice)
     t->nice = nice;
 
     /* RECALCULAR A PRIORIDADE DA THREAD BASEADO NO NOVO VALOR */
-    /* SE A THREAD RODANDO NÃO TEM MAIN A MAIOR PRIORIDADE, YIELD */
+    thread_recalc_priority(t);
+
+    /* SE A THREAD RODANDO NÃO TEM MAIS A MAIOR PRIORIDADE, YIELD */
 }
 
 /* Returns the current thread's nice value. */
@@ -396,16 +426,38 @@ thread_get_nice (void)
 int
 thread_get_load_avg (void) 
 {
-    /* Not yet implemented. */
-    return 0;
+    int tmp = FLOAT_ROUND(FLOAT_MULT_MIX(system_load_avg, 100));
+    //printf("System Load Avg Real: %d\n", system_load_avg);
+    //printf("Load Avg: %d\n", tmp);
+    return tmp;
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-    /* Not yet implemented. */
-    return 0;
+    struct thread* t = thread_current();
+    int tmp = FLOAT_ROUND(FLOAT_MULT_MIX(t->recent_cpu_time, 100));
+    printf("CPU Time Real: %d\n", t->recent_cpu_time);
+    printf("CPU Time: %d\n", tmp);
+    return tmp;
+}
+
+static void thread_recalc_cpu_time(struct thread *t, void *aux UNUSED)
+{
+    int t0 = FLOAT_MULT_MIX(system_load_avg, 2);
+    int t1 = FLOAT_ADD_MIX(t0, 1);
+    int t2 = FLOAT_DIV(t0, t1);
+
+    int t3 = FLOAT_MULT(t2, t->recent_cpu_time);
+
+    t->recent_cpu_time = FLOAT_ADD_MIX(t3, t->nice);
+    thread_recalc_priority(t);
+}
+
+void thread_recalc_priority(struct thread *t)
+{
+    t->priority = FLOAT_ROUND(FLOAT_SUB_MIX(FLOAT_SUB(FLOAT_CONST(PRI_MAX), FLOAT_DIV_MIX(t->recent_cpu_time, 4)), (t->nice * 2)));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -497,6 +549,7 @@ init_thread (struct thread *t, const char *name, int priority)
     t->priority = priority; /* Mudar! Tem que calcular a prioridade. Não tem suporte p/ float, usar defines no pdf monitoria */ 
     t->magic = THREAD_MAGIC;
     t->nice = 0; // Threads iniciais devem começar com nice 0
+    t->recent_cpu_time = 0;
 
     old_level = intr_disable ();
     list_push_back (&all_list, &t->allelem);
