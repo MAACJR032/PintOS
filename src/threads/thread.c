@@ -174,7 +174,6 @@ thread_tick (void)
     else
         kernel_ticks++;
 
-
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE)
         intr_yield_on_return();
@@ -410,6 +409,17 @@ thread_set_nice (int nice)
     thread_recalc_priority(t);
 
     /* SE A THREAD RODANDO NÃO TEM MAIS A MAIOR PRIORIDADE, YIELD */
+    bool highest_priority = true;
+    for (struct list_elem *e = list_begin (&all_list); e != list_end (&all_list) && highest_priority == true; e = list_next (e))
+    {
+        struct thread *thread_curr = list_entry (e, struct thread, allelem);
+        
+        if (t->priority < thread_curr->priority)
+            highest_priority = false;
+    }
+
+    if (highest_priority == false)
+        thread_yield();
 }
 
 /* Returns the current thread's nice value. */
