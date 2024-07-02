@@ -273,8 +273,27 @@ thread_unblock (struct thread *t)
 
     old_level = intr_disable ();
     ASSERT (t->status == THREAD_BLOCKED);
-    list_push_back (&ready_list, &t->elem);
+
+    int was_inserted = 0;
+    for (struct list_elem *e = list_begin (&ready_list); e != list_end (&ready_list) && was_inserted == 0; e = list_next (e))
+    {
+        struct thread *thread_elem = list_entry (e, struct thread, elem);
+
+        if(thread_elem->priority < t->priority)
+        {
+            e = list_prev(e);
+            list_insert(e, &t->elem);
+            was_inserted = 1;
+        }
+    }
+
+    if(was_inserted == 0)
+        list_push_back (&ready_list, &t->elem);
+
     t->status = THREAD_READY;
+
+    thread_check_priority();
+
     intr_set_level (old_level);
 }
 
@@ -398,6 +417,20 @@ thread_get_priority (void)
     return thread_current()->priority;
 }
 
+void thread_check_priority(void)
+{
+    if(thread_mlfqs && !list_empty(&ready_list))
+    {
+        struct thread *t = thread_current();
+
+        struct thread *first_thread_ready = list_entry( list_front(&ready_list), 
+                                                    struct thread, elem);
+        
+        if(t != idle_thread && t->priority < first_thread_ready->priority)
+            thread_yield();
+    }
+}
+
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice) 
@@ -410,6 +443,7 @@ thread_set_nice (int nice)
     thread_recalc_priority(t);
 
     /* SE A THREAD RODANDO NÃO TEM MAIS A MAIOR PRIORIDADE, YIELD */
+    thread_check_priority();
 }
 
 /* Returns the current thread's nice value. */
@@ -438,8 +472,8 @@ thread_get_recent_cpu (void)
 {
     struct thread* t = thread_current();
     int tmp = FLOAT_ROUND(FLOAT_MULT_MIX(t->recent_cpu_time, 100));
-    printf("CPU Time Real: %d\n", t->recent_cpu_time);
-    printf("CPU Time: %d\n", tmp);
+    //printf("CPU Time Real: %d\n", t->recent_cpu_time);
+    //printf("CPU Time: %d\n", tmp);
     return tmp;
 }
 
@@ -661,11 +695,6 @@ schedule (void)
     struct thread *next = next_thread_to_run ();
     struct thread *prev = NULL;
 
-    /* TODO:
-    * Ver de usar o thread_block, mas para o schedule 
-    * tem de verificar se uma thread esta bloqueada, alem de implementar 
-    * o unblock com o tempo
-    * */
     ASSERT (cur->status != THREAD_RUNNING);
     ASSERT (is_thread (next));
 
