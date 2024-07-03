@@ -152,7 +152,7 @@ thread_tick (void)
     t->recent_cpu_time = FLOAT_ADD_MIX(t->recent_cpu_time, 1);
     bool intr_return = false;
 
-    if (thread_mlfqs && ticks % TIMER_FREQ == 0)
+    if (thread_mlfqs)
     {
         if(ticks % TIMER_FREQ == 0)
         {
