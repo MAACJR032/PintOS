@@ -26,6 +26,8 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+static struct list arr_ready_list[PRI_MAX + 1];
+
 static struct list yield_block_list;
 
 /* List of all processes.  Processes are added to this list
@@ -81,7 +83,8 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 static void thread_recalc_cpu_time(struct thread *t, void *aux UNUSED);
-static void thread_recalc_priority(struct thread *t);
+static void thread_recalc_priority(struct thread *t, void *aux UNUSED);
+static bool intr_thread_check_priority(void);
 
 
 /* Initializes the threading system by transforming the code
@@ -104,6 +107,10 @@ thread_init (void)
 
     lock_init (&tid_lock);
     list_init (&ready_list);
+
+    for(int32_t i = PRI_MAX; i >= 0; i--)
+        list_init(&arr_ready_list[i]);
+
     list_init (&yield_block_list);
     list_init (&all_list);
 
@@ -143,25 +150,39 @@ thread_tick (void)
     struct thread *t = thread_current();
 
     t->recent_cpu_time = FLOAT_ADD_MIX(t->recent_cpu_time, 1);
+    bool intr_return = false;
 
-    if (ticks % TIMER_FREQ == 0)
+    if (thread_mlfqs && ticks % TIMER_FREQ == 0)
     {
-        int sum = 0;
-        if(t != idle_thread)
-            sum = 1;
+        if(ticks % TIMER_FREQ == 0)
+        {
+            int sum = 0;
+            if(t != idle_thread)
+                sum = 1;
 
-        int t0 = FLOAT_DIV_MIX(FLOAT_CONST(59), 60);
-        int t1 = FLOAT_MULT(t0, system_load_avg);
+            int t0 = FLOAT_DIV_MIX(FLOAT_CONST(59), 60);
+            int t1 = FLOAT_MULT(t0, system_load_avg);
 
-        int t2 = FLOAT_DIV_MIX(FLOAT_CONST(1), 60);
-        int t3 = FLOAT_MULT_MIX(t2, (list_size(&ready_list) + sum));
+            int t2 = FLOAT_DIV_MIX(FLOAT_CONST(1), 60);
+            
+            int size = 0;
+            for(int32_t i = PRI_MAX; i >= 0; i--)
+                size += list_size(&arr_ready_list[i]);
 
-        //printf("T0 = %d T1 = %d T2 = %d T3 = %d\n", t0, t1, t2, t3);
-        system_load_avg = FLOAT_ADD(t1, t3);
+            int t3 = FLOAT_MULT_MIX(t2, (size + sum));
 
-        thread_foreach(thread_recalc_cpu_time, NULL);
+            //printf("T0 = %d T1 = %d T2 = %d T3 = %d\n", t0, t1, t2, t3);
+            system_load_avg = FLOAT_ADD(t1, t3);
+
+            thread_foreach(thread_recalc_cpu_time, NULL);
+            intr_return = intr_thread_check_priority();
+        }
+        else if(ticks % 4 == 0)
+        {
+            thread_foreach(thread_recalc_priority, NULL);
+            intr_return = intr_thread_check_priority();
+        }
     }
-
 
     /* Update statistics. */
     if (t == idle_thread)
@@ -176,7 +197,7 @@ thread_tick (void)
 
 
     /* Enforce preemption. */
-    if (++thread_ticks >= TIME_SLICE)
+    if (++thread_ticks >= TIME_SLICE || intr_return)
         intr_yield_on_return();
 }
 
@@ -274,23 +295,14 @@ thread_unblock (struct thread *t)
     old_level = intr_disable ();
     ASSERT (t->status == THREAD_BLOCKED);
 
-    int was_inserted = 0;
-    for (struct list_elem *e = list_begin (&ready_list); e != list_end (&ready_list) && was_inserted == 0; e = list_next (e))
-    {
-        struct thread *thread_elem = list_entry (e, struct thread, elem);
-
-        if(thread_elem->priority < t->priority)
-        {
-            e = list_prev(e);
-            list_insert(e, &t->elem);
-            was_inserted = 1;
-        }
-    }
-
-    if(was_inserted == 0)
-        list_push_back (&ready_list, &t->elem);
-
     t->status = THREAD_READY;
+    if(thread_mlfqs)
+    {
+        list_push_back(&arr_ready_list[t->priority], &t->elem);
+        thread_check_priority();
+    }
+    else
+        list_push_back (&ready_list, &t->elem);
 
     thread_check_priority();
 
@@ -362,8 +374,15 @@ thread_yield (void)
     ASSERT (!intr_context ());
 
     old_level = intr_disable ();
+    
     if (cur != idle_thread) 
-      list_push_back (&ready_list, &cur->elem);
+    {
+        if(thread_mlfqs)
+            list_push_back(&arr_ready_list[cur->priority], &cur->elem);
+        else
+            list_push_back (&ready_list, &cur->elem);
+    }
+    
     cur->status = THREAD_READY;
     schedule ();
     intr_set_level (old_level);
@@ -407,7 +426,14 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-    thread_current()->priority = new_priority;
+    if(new_priority < PRI_MIN)
+        thread_current()->priority = PRI_MIN;
+    else if(new_priority > PRI_MAX)
+        thread_current()->priority = PRI_MAX;
+    else
+        thread_current()->priority = new_priority;
+
+    thread_check_priority();
 }
 
 /* Returns the current thread's priority. */
@@ -419,16 +445,29 @@ thread_get_priority (void)
 
 void thread_check_priority(void)
 {
-    if(thread_mlfqs && !list_empty(&ready_list))
-    {
-        struct thread *t = thread_current();
+    struct thread *cur = thread_current();
 
-        struct thread *first_thread_ready = list_entry( list_front(&ready_list), 
-                                                    struct thread, elem);
-        
-        if(t != idle_thread && t->priority < first_thread_ready->priority)
-            thread_yield();
+    if(cur != idle_thread)
+    {
+        for(int32_t i = PRI_MAX; i > cur->priority; i--)
+        {
+            if(!list_empty(&arr_ready_list[i]))
+            {
+                thread_yield();
+                break;   
+            }
+        }
     }
+}
+
+bool intr_thread_check_priority(void)
+{
+    struct thread *cur = thread_current();
+
+    if(cur != idle_thread)
+        for(int32_t i = PRI_MAX; i > cur->priority; i--)
+            if(!list_empty(&arr_ready_list[i]))
+                return true;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -440,7 +479,7 @@ thread_set_nice (int nice)
     t->nice = nice;
 
     /* RECALCULAR A PRIORIDADE DA THREAD BASEADO NO NOVO VALOR */
-    thread_recalc_priority(t);
+    thread_recalc_priority(t, NULL);
 
     /* SE A THREAD RODANDO NÃO TEM MAIS A MAIOR PRIORIDADE, YIELD */
     thread_check_priority();
@@ -486,12 +525,24 @@ static void thread_recalc_cpu_time(struct thread *t, void *aux UNUSED)
     int t3 = FLOAT_MULT(t2, t->recent_cpu_time);
 
     t->recent_cpu_time = FLOAT_ADD_MIX(t3, t->nice);
-    thread_recalc_priority(t);
+    thread_recalc_priority(t, NULL);
 }
 
-void thread_recalc_priority(struct thread *t)
+void thread_recalc_priority(struct thread *t, void *aux UNUSED)
 {
+    int old_priority = t->priority;
     t->priority = FLOAT_ROUND(FLOAT_SUB_MIX(FLOAT_SUB(FLOAT_CONST(PRI_MAX), FLOAT_DIV_MIX(t->recent_cpu_time, 4)), (t->nice * 2)));
+    
+    if(t->priority < PRI_MIN) 
+        t->priority = PRI_MIN;
+    else if(t->priority > PRI_MAX)
+        t->priority = PRI_MAX;
+
+    if(t != idle_thread && t->status == THREAD_READY && t->priority != old_priority)
+    {
+        list_remove(&t->elem);
+        list_push_back(&arr_ready_list[t->priority], &t->elem);
+    }
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -621,15 +672,24 @@ next_thread_to_run (void)
             e = list_prev(e); // e = e->prev; e recebe o elemento anterior do elemento removido
 
             ASSERT (t->status == THREAD_BLOCKED);
-            list_push_back (&ready_list, &t->elem);
+            if(thread_mlfqs)
+                list_push_back(&arr_ready_list[t->priority], &t->elem);
+            else
+                list_push_back (&ready_list, &t->elem);
             t->status = THREAD_READY;
         }
     }
 
-    if (list_empty (&ready_list))
-        return idle_thread;
-    else
+    if(thread_mlfqs)
+    {
+        for(int32_t i = PRI_MAX; i >= 0; i--)
+            if(!list_empty(&arr_ready_list[i]))
+                return list_entry (list_pop_front (&arr_ready_list[i]), struct thread, elem);
+    }
+    else if (!list_empty (&ready_list))
         return list_entry (list_pop_front (&ready_list), struct thread, elem);
+
+    return idle_thread;
 }
 
 /* Completes a thread switch by activating the new thread's page
