@@ -26,9 +26,10 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* Array de ready_list separadas por prioridade, em que cada índice corresponde ao valor da prioridade */
 static struct list arr_ready_list[PRI_MAX + 1];
 
-static struct list yield_block_list;
+static struct list yield_block_list; // Lista de threads bloqueadas
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -108,7 +109,7 @@ thread_init (void)
     lock_init (&tid_lock);
     list_init (&ready_list);
 
-    for(int32_t i = PRI_MAX; i >= 0; i--)
+    for (int32_t i = PRI_MAX; i >= 0; i--)
         list_init(&arr_ready_list[i]);
 
     list_init (&yield_block_list);
@@ -144,8 +145,6 @@ thread_start (void)
 void
 thread_tick (void) 
 {
-    /* Calcular o load average*/
-    /* Verificar se passou o time slice (4 ticks) e atualiza as prioridades */
     ticks++;
     struct thread *t = thread_current();
 
@@ -154,10 +153,11 @@ thread_tick (void)
 
     if (thread_mlfqs)
     {
-        if(ticks % TIMER_FREQ == 0)
+        /* Calculo do load average*/
+        if (ticks % TIMER_FREQ == 0)
         {
             int sum = 0;
-            if(t != idle_thread)
+            if (t != idle_thread)
                 sum = 1;
 
             int t0 = FLOAT_DIV_MIX(FLOAT_CONST(59), 60);
@@ -166,18 +166,18 @@ thread_tick (void)
             int t2 = FLOAT_DIV_MIX(FLOAT_CONST(1), 60);
             
             int size = 0;
-            for(int32_t i = PRI_MAX; i >= 0; i--)
+            for (int32_t i = PRI_MAX; i >= 0; i--)
                 size += list_size(&arr_ready_list[i]);
 
             int t3 = FLOAT_MULT_MIX(t2, (size + sum));
 
-            //printf("T0 = %d T1 = %d T2 = %d T3 = %d\n", t0, t1, t2, t3);
             system_load_avg = FLOAT_ADD(t1, t3);
 
             thread_foreach(thread_recalc_cpu_time, NULL);
             intr_return = intr_thread_check_priority();
         }
-        else if(ticks % 4 == 0)
+        /* Verifica se passou o time slice (4 ticks) e atualiza as prioridades */
+        else if (ticks % 4 == 0)
         {
             thread_foreach(thread_recalc_priority, NULL);
             intr_return = intr_thread_check_priority();
@@ -194,7 +194,6 @@ thread_tick (void)
 #endif
     else
         kernel_ticks++;
-
 
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE || intr_return)
@@ -296,7 +295,7 @@ thread_unblock (struct thread *t)
     ASSERT (t->status == THREAD_BLOCKED);
 
     t->status = THREAD_READY;
-    if(thread_mlfqs)
+    if (thread_mlfqs)
     {
         list_push_back(&arr_ready_list[t->priority], &t->elem);
         thread_check_priority();
@@ -377,7 +376,7 @@ thread_yield (void)
     
     if (cur != idle_thread) 
     {
-        if(thread_mlfqs)
+        if (thread_mlfqs)
             list_push_back(&arr_ready_list[cur->priority], &cur->elem);
         else
             list_push_back (&ready_list, &cur->elem);
@@ -426,9 +425,9 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-    if(new_priority < PRI_MIN)
+    if (new_priority < PRI_MIN)
         thread_current()->priority = PRI_MIN;
-    else if(new_priority > PRI_MAX)
+    else if (new_priority > PRI_MAX)
         thread_current()->priority = PRI_MAX;
     else
         thread_current()->priority = new_priority;
@@ -447,11 +446,11 @@ void thread_check_priority(void)
 {
     struct thread *cur = thread_current();
 
-    if(cur != idle_thread)
+    if (cur != idle_thread)
     {
-        for(int32_t i = PRI_MAX; i > cur->priority; i--)
+        for (int32_t i = PRI_MAX; i > cur->priority; i--)
         {
-            if(!list_empty(&arr_ready_list[i]))
+            if (!list_empty(&arr_ready_list[i]))
             {
                 thread_yield();
                 break;   
@@ -464,9 +463,9 @@ bool intr_thread_check_priority(void)
 {
     struct thread *cur = thread_current();
 
-    if(cur != idle_thread)
-        for(int32_t i = PRI_MAX; i > cur->priority; i--)
-            if(!list_empty(&arr_ready_list[i]))
+    if (cur != idle_thread)
+        for (int32_t i = PRI_MAX; i > cur->priority; i--)
+            if (!list_empty(&arr_ready_list[i]))
                 return true;
 }
 
@@ -474,11 +473,10 @@ bool intr_thread_check_priority(void)
 void
 thread_set_nice (int nice) 
 {
-    /* Not yet implemented. */
     struct thread *t = thread_current();
     t->nice = nice;
 
-    /* RECALCULAR A PRIORIDADE DA THREAD BASEADO NO NOVO VALOR */
+    /* RECALCULA A PRIORIDADE DA THREAD BASEADO NO NOVO VALOR */
     thread_recalc_priority(t, NULL);
 
     /* SE A THREAD RODANDO NÃO TEM MAIS A MAIOR PRIORIDADE, YIELD */
@@ -489,10 +487,8 @@ thread_set_nice (int nice)
 int
 thread_get_nice (void) 
 {
-    /* Not yet implemented. */
     struct thread *t = thread_current();
     return t->nice;
-    // return 0;
 }
 
 /* Returns 100 times the system load average. */
@@ -500,8 +496,6 @@ int
 thread_get_load_avg (void) 
 {
     int tmp = FLOAT_ROUND(FLOAT_MULT_MIX(system_load_avg, 100));
-    //printf("System Load Avg Real: %d\n", system_load_avg);
-    //printf("Load Avg: %d\n", tmp);
     return tmp;
 }
 
@@ -511,8 +505,6 @@ thread_get_recent_cpu (void)
 {
     struct thread* t = thread_current();
     int tmp = FLOAT_ROUND(FLOAT_MULT_MIX(t->recent_cpu_time, 100));
-    //printf("CPU Time Real: %d\n", t->recent_cpu_time);
-    //printf("CPU Time: %d\n", tmp);
     return tmp;
 }
 
@@ -521,7 +513,6 @@ static void thread_recalc_cpu_time(struct thread *t, void *aux UNUSED)
     int t0 = FLOAT_MULT_MIX(system_load_avg, 2);
     int t1 = FLOAT_ADD_MIX(t0, 1);
     int t2 = FLOAT_DIV(t0, t1);
-
     int t3 = FLOAT_MULT(t2, t->recent_cpu_time);
 
     t->recent_cpu_time = FLOAT_ADD_MIX(t3, t->nice);
@@ -533,12 +524,13 @@ void thread_recalc_priority(struct thread *t, void *aux UNUSED)
     int old_priority = t->priority;
     t->priority = FLOAT_ROUND(FLOAT_SUB_MIX(FLOAT_SUB(FLOAT_CONST(PRI_MAX), FLOAT_DIV_MIX(t->recent_cpu_time, 4)), (t->nice * 2)));
     
-    if(t->priority < PRI_MIN) 
+    // Arredonda a prioridade para ficar dentro dos limites entre PRI_MIN e PRI_MAX
+    if (t->priority < PRI_MIN) 
         t->priority = PRI_MIN;
-    else if(t->priority > PRI_MAX)
+    else if (t->priority > PRI_MAX)
         t->priority = PRI_MAX;
 
-    if(t != idle_thread && t->status == THREAD_READY && t->priority != old_priority)
+    if (t != idle_thread && t->status == THREAD_READY && t->priority != old_priority)
     {
         list_remove(&t->elem);
         list_push_back(&arr_ready_list[t->priority], &t->elem);
@@ -631,10 +623,10 @@ init_thread (struct thread *t, const char *name, int priority)
     t->status = THREAD_BLOCKED;
     strlcpy (t->name, name, sizeof t->name);
     t->stack = (uint8_t *) t + PGSIZE;
-    t->priority = priority; /* Mudar! Tem que calcular a prioridade. Não tem suporte p/ float, usar defines no pdf monitoria */ 
+    t->priority = priority;
     t->magic = THREAD_MAGIC;
     t->nice = 0; // Threads iniciais devem começar com nice 0
-    t->recent_cpu_time = 0;
+    t->recent_cpu_time = 0; // Threads iniciais devem começar com recent_cpu_time 0
 
     old_level = intr_disable ();
     list_push_back (&all_list, &t->allelem);
@@ -666,13 +658,13 @@ next_thread_to_run (void)
     {
         struct thread *t = list_entry (e, struct thread, elem);
 
-        if(ticks >= t->tick_to_wake_up)
+        if (ticks >= t->tick_to_wake_up)
         {
             e = list_remove(e); // e = e->next; e recebe o proximo elemento depois do elemento removido
             e = list_prev(e); // e = e->prev; e recebe o elemento anterior do elemento removido
 
             ASSERT (t->status == THREAD_BLOCKED);
-            if(thread_mlfqs)
+            if (thread_mlfqs)
                 list_push_back(&arr_ready_list[t->priority], &t->elem);
             else
                 list_push_back (&ready_list, &t->elem);
@@ -680,10 +672,10 @@ next_thread_to_run (void)
         }
     }
 
-    if(thread_mlfqs)
+    if (thread_mlfqs)
     {
-        for(int32_t i = PRI_MAX; i >= 0; i--)
-            if(!list_empty(&arr_ready_list[i]))
+        for (int32_t i = PRI_MAX; i >= 0; i--)
+            if (!list_empty(&arr_ready_list[i]))
                 return list_entry (list_pop_front (&arr_ready_list[i]), struct thread, elem);
     }
     else if (!list_empty (&ready_list))
