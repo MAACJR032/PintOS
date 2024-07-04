@@ -312,6 +312,7 @@ thread_unblock (struct thread *t)
     {
         /* Coloca a thread no final da sua fila de prioridade */
         list_push_back(&arr_ready_list[t->priority], &t->elem);
+       
         /*  Verifica se a thread desbloqueada possui maior prioridade do que
             a que está em execução */
         thread_check_priority();
@@ -418,6 +419,7 @@ void thread_yield_block(int64_t tick_to_wake_up)
     {
         /* Thread atual guarda a partir de qual tick deve acordar */
         cur->tick_to_wake_up = tick_to_wake_up;
+       
         /* Thread atual é posta no final da fila de threads que estão dormindo */
         list_push_back (&yield_block_list, &cur->elem);
     }
@@ -517,7 +519,7 @@ thread_set_nice (int nice)
     thread_recalc_priority(t, NULL);
 
     /*  Verifica se existe alguma thread com maior prioridade do que a thread atual em execução
-        após ter sido mudado o nice da thread */
+        após a prioridade ser recalculada devido ao valor do nice ter sido mudado */
     thread_check_priority();
 }
 
@@ -654,7 +656,6 @@ is_thread (struct thread *t)
 
 /* Does basic initialization of T as a blocked thread named
    NAME. */
-/* A thread que chama essa função é o 'pai' da nova thread, a nova thread deve ter o 'nice' da thread pai*/
 static void
 init_thread (struct thread *t, const char *name, int priority)
 {
@@ -713,6 +714,7 @@ next_thread_to_run (void)
             e = list_prev(e); // e = e->prev; e recebe o elemento anterior do elemento removido
 
             ASSERT (t->status == THREAD_BLOCKED);
+           
             /* Colocando de volta no final da sua determinada fila de prioridade */
             if (thread_mlfqs)
                 list_push_back(&arr_ready_list[t->priority], &t->elem);
