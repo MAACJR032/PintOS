@@ -14,7 +14,7 @@ não precisa nem no `make check` do src/threads/build (se der algum erro oque fo
 
 ### Objetivos:
 - [x] Alarm Clock
-- [ ] Advanced Scheduler
+- [x] Advanced Scheduler
 ### Detalhamentos:
 <details>
     <summary>Alarm</summary>
