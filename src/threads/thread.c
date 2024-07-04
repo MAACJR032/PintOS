@@ -29,7 +29,7 @@ static struct list ready_list;
 /* Array de ready_list separadas por prioridade, em que cada índice corresponde ao valor da prioridade */
 static struct list arr_ready_list[PRI_MAX + 1];
 
-static struct list yield_block_list; // Lista de threads bloqueadas
+static struct list yield_block_list; // Lista de threads que estão em estado de sleep
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -148,38 +148,48 @@ thread_tick (void)
     ticks++;
     struct thread *t = thread_current();
 
+    //Incrementando o recent_cpu da thread atual
     t->recent_cpu_time = FLOAT_ADD_MIX(t->recent_cpu_time, 1);
     bool intr_return = false;
 
     if (thread_mlfqs)
     {
-        /* Calculo do load average*/
+        /* Calculo do load average e das recent cpu de cada thread a cada segundo*/
         if (ticks % TIMER_FREQ == 0)
         {
+            /*  Verifica se a thread atual é idle_thread ou se é uma thread comum
+                Caso seja uma thread comum ela entra no calculo do load avg.    */
             int sum = 0;
             if (t != idle_thread)
                 sum = 1;
 
-            int t0 = FLOAT_DIV_MIX(FLOAT_CONST(59), 60);
-            int t1 = FLOAT_MULT(t0, system_load_avg);
+            int t0 = FLOAT_DIV_MIX(FLOAT_CONST(59), 60); // 59/60
+            int t1 = FLOAT_MULT(t0, system_load_avg); // (59/60) * load_avg
 
-            int t2 = FLOAT_DIV_MIX(FLOAT_CONST(1), 60);
+            int t2 = FLOAT_DIV_MIX(FLOAT_CONST(1), 60); // 1/60
             
+            /* Obtendo o numero de threads prontas que estão nas filas de prioridades. */
             int size = 0;
             for (int32_t i = PRI_MAX; i >= 0; i--)
                 size += list_size(&arr_ready_list[i]);
 
-            int t3 = FLOAT_MULT_MIX(t2, (size + sum));
+            int t3 = FLOAT_MULT_MIX(t2, (size + sum)); // (1/60) * ready_list_size
 
-            system_load_avg = FLOAT_ADD(t1, t3);
+            system_load_avg = FLOAT_ADD(t1, t3); // (59/60) * load_avg + (1/60) * ready_list_size
 
+            /* Recalcula o recent cpu ( e consequentemente as prioridades ) de TODAS as threads. */
             thread_foreach(thread_recalc_cpu_time, NULL);
+
+            /*  Verifica se existe alguma thread com maior prioridade do que a thread que está em execução */
             intr_return = intr_thread_check_priority();
         }
         /* Verifica se passou o time slice (4 ticks) e atualiza as prioridades */
         else if (ticks % 4 == 0)
         {
+            /* Recalcula as prioridades de TODAS as threads */
             thread_foreach(thread_recalc_priority, NULL);
+
+            /*  Verifica se existe alguma thread com maior prioridade do que a thread que está em execução */
             intr_return = intr_thread_check_priority();
         }
     }
@@ -195,7 +205,10 @@ thread_tick (void)
     else
         kernel_ticks++;
 
-    /* Enforce preemption. */
+    /*  Enforce preemption. */
+    /*  Caso o quantum da thread atual acabar ou existir alguma thread com prioridade maior
+        do que a que está em execução intr_yield_on_return() vai setar o valor de uma variável
+        para true que em intr_handler será usada para chamar a thread_yield() */
     if (++thread_ticks >= TIME_SLICE || intr_return)
         intr_yield_on_return();
 }
@@ -297,13 +310,14 @@ thread_unblock (struct thread *t)
     t->status = THREAD_READY;
     if (thread_mlfqs)
     {
+        /* Coloca a thread no final da sua fila de prioridade */
         list_push_back(&arr_ready_list[t->priority], &t->elem);
+        /*  Verifica se a thread desbloqueada possui maior prioridade do que
+            a que está em execução */
         thread_check_priority();
     }
     else
         list_push_back (&ready_list, &t->elem);
-
-    thread_check_priority();
 
     intr_set_level (old_level);
 }
@@ -376,6 +390,7 @@ thread_yield (void)
     
     if (cur != idle_thread) 
     {
+        /* Coloca a thread no final da sua fila de prioridade */
         if (thread_mlfqs)
             list_push_back(&arr_ready_list[cur->priority], &cur->elem);
         else
@@ -387,6 +402,10 @@ thread_yield (void)
     intr_set_level (old_level);
 }
 
+/*  Ao ser chamada a thread atual será colocada na fila de threads
+    que estão dormindo, o argumento passado é justamente o tick em que
+    a thread deve acordar ( a partir dele que ela deve acordar não necessariamente
+    no valor especificado ). */
 void thread_yield_block(int64_t tick_to_wake_up)
 {
     struct thread *cur = thread_current ();
@@ -397,9 +416,12 @@ void thread_yield_block(int64_t tick_to_wake_up)
     old_level = intr_disable ();
     if (cur != idle_thread) 
     {
+        /* Thread atual guarda a partir de qual tick deve acordar */
         cur->tick_to_wake_up = tick_to_wake_up;
+        /* Thread atual é posta no final da fila de threads que estão dormindo */
         list_push_back (&yield_block_list, &cur->elem);
     }
+
     cur->status = THREAD_BLOCKED;
     schedule ();
     intr_set_level (old_level);
@@ -425,6 +447,7 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+    /* Seta a prioridade da thread limitando ela para um valor entre [PRI_MIN, PRI_MAX] */
     if (new_priority < PRI_MIN)
         thread_current()->priority = PRI_MIN;
     else if (new_priority > PRI_MAX)
@@ -432,6 +455,8 @@ thread_set_priority (int new_priority)
     else
         thread_current()->priority = new_priority;
 
+    /*  Verifica se existe alguma thread com maior prioridade do que a thread atual em execução
+        após ter sido mudada a sua prioridade */
     thread_check_priority();
 }
 
@@ -442,16 +467,22 @@ thread_get_priority (void)
     return thread_current()->priority;
 }
 
+/*  Verifica se existe alguma thread com maior prioridade do que a thread atual que está em execução
+    Caso sim a thread atual será posta no final de sua fila de prioridade e o escalonador é chamado
+    Para realizar a troca de contexto */
 void thread_check_priority(void)
 {
     struct thread *cur = thread_current();
 
     if (cur != idle_thread)
     {
+        /* Percorre todas as filas de prioridade até chegar na fila de prioridade da thread atual */
         for (int32_t i = PRI_MAX; i > cur->priority; i--)
         {
+            /* Caso a fila não esteja vazia então existe uma thread de prioridade maior que a thread atual */
             if (!list_empty(&arr_ready_list[i]))
             {
+                /* Coloca a thread atual na fila de prioridade de volta e chama o escalonador */
                 thread_yield();
                 break;   
             }
@@ -459,14 +490,20 @@ void thread_check_priority(void)
     }
 }
 
+/*  Verifica se existe alguma thread com maior prioridade do que a thread atual que está em execução
+    Caso sim o valor retornado pela função será true caso contrário o valor séra false */
 bool intr_thread_check_priority(void)
 {
     struct thread *cur = thread_current();
 
     if (cur != idle_thread)
+        /* Percorre todas as filas de prioridade até chegar na fila de prioridade da thread atual */
         for (int32_t i = PRI_MAX; i > cur->priority; i--)
+             /* Caso a fila não esteja vazia então existe uma thread de prioridade maior que a thread atual */
             if (!list_empty(&arr_ready_list[i]))
                 return true;
+    
+    return false;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -476,10 +513,11 @@ thread_set_nice (int nice)
     struct thread *t = thread_current();
     t->nice = nice;
 
-    /* RECALCULA A PRIORIDADE DA THREAD BASEADO NO NOVO VALOR */
+    /* Recalcula a prioridade da thread baseada no novo valor do nice */
     thread_recalc_priority(t, NULL);
 
-    /* SE A THREAD RODANDO NÃO TEM MAIS A MAIOR PRIORIDADE, YIELD */
+    /*  Verifica se existe alguma thread com maior prioridade do que a thread atual em execução
+        após ter sido mudado o nice da thread */
     thread_check_priority();
 }
 
@@ -510,26 +548,33 @@ thread_get_recent_cpu (void)
 
 static void thread_recalc_cpu_time(struct thread *t, void *aux UNUSED)
 {
-    int t0 = FLOAT_MULT_MIX(system_load_avg, 2);
-    int t1 = FLOAT_ADD_MIX(t0, 1);
-    int t2 = FLOAT_DIV(t0, t1);
-    int t3 = FLOAT_MULT(t2, t->recent_cpu_time);
+    int t0 = FLOAT_MULT_MIX(system_load_avg, 2); // load_avg * 2
+    int t1 = FLOAT_ADD_MIX(t0, 1); // load_avg * 2 + 1
+    int t2 = FLOAT_DIV(t0, t1); // (load_avg * 2) / (load_avg * 2 + 1)
+    int t3 = FLOAT_MULT(t2, t->recent_cpu_time); // (load_avg * 2) / (load_avg * 2 + 1) * recent_cpu
 
-    t->recent_cpu_time = FLOAT_ADD_MIX(t3, t->nice);
+    t->recent_cpu_time = FLOAT_ADD_MIX(t3, t->nice); // recent_cpu = (load_avg * 2) / (load_avg * 2 + 1) * recent_cpu + nice
+    
+    /* Recalculando prioridade da thread */
     thread_recalc_priority(t, NULL);
 }
 
 void thread_recalc_priority(struct thread *t, void *aux UNUSED)
 {
     int old_priority = t->priority;
+
+    /* priority = PRI_MAX - (recent_cpu / 4) - nice * 2 */
     t->priority = FLOAT_ROUND(FLOAT_SUB_MIX(FLOAT_SUB(FLOAT_CONST(PRI_MAX), FLOAT_DIV_MIX(t->recent_cpu_time, 4)), (t->nice * 2)));
     
-    // Arredonda a prioridade para ficar dentro dos limites entre PRI_MIN e PRI_MAX
+    /* Limita o valor da prioridade para um valor entre [PRI_MIN, PRI_MAX] */
     if (t->priority < PRI_MIN) 
         t->priority = PRI_MIN;
     else if (t->priority > PRI_MAX)
         t->priority = PRI_MAX;
 
+    /*  Se a prioridade da thread mudou, e ela está em alguma fila de prioridade, 
+        então ela é removida de sua fila de prioridade atual e ela é posta em uma
+        nova fila de prioridade, correspondente a sua nova prioridade. */
     if (t != idle_thread && t->status == THREAD_READY && t->priority != old_priority)
     {
         list_remove(&t->elem);
@@ -654,16 +699,21 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
+    /*  Percorre a fila de threads dormindo verificando se alguma acordou
+        Caso alguma tenha acordado, ela é posta em sua determinada fila de prioridade */
     for (struct list_elem *e = list_begin (&yield_block_list); e != list_end (&yield_block_list); e = list_next (e))
     {
         struct thread *t = list_entry (e, struct thread, elem);
 
+        /* Verificando se ja se passou o tick determinado a partir do qual a thread poderia acordar */
         if (ticks >= t->tick_to_wake_up)
         {
+            /* Removendo da fila de threads dormindo */
             e = list_remove(e); // e = e->next; e recebe o proximo elemento depois do elemento removido
             e = list_prev(e); // e = e->prev; e recebe o elemento anterior do elemento removido
 
             ASSERT (t->status == THREAD_BLOCKED);
+            /* Colocando de volta no final da sua determinada fila de prioridade */
             if (thread_mlfqs)
                 list_push_back(&arr_ready_list[t->priority], &t->elem);
             else
@@ -674,6 +724,8 @@ next_thread_to_run (void)
 
     if (thread_mlfqs)
     {
+        /*  Percorre todas as filas de prioridade, começando pelas prioridades mais altas,
+            procurando por uma thread para por em execução */
         for (int32_t i = PRI_MAX; i >= 0; i--)
             if (!list_empty(&arr_ready_list[i]))
                 return list_entry (list_pop_front (&arr_ready_list[i]), struct thread, elem);

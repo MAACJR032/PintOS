@@ -115,6 +115,9 @@ sema_up (struct semaphore *sema)
 
   old_level = intr_disable ();
 
+  //Primeiro incrementamos o valor do semaforo
+  //Antes de desbloquear as threads que foram bloqueadas
+  //Para evitar bugs no semaforo caso ocorra troca de contexto
   sema->value++;
 
   if (!list_empty (&sema->waiters)) 

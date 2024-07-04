@@ -93,9 +93,11 @@ timer_sleep (int64_t ticks)
 
     ASSERT (intr_get_level() == INTR_ON);
 
+    //Nenhuma thread pode dormir por 0 ticks ou por ticks negativos
     if (ticks <= 0)
         return;
 
+    //Chama a função para colocar a thread na lista de threads dormindo
     thread_yield_block(start + ticks);
 }
 
