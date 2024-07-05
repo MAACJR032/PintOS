@@ -319,7 +319,8 @@ thread_unblock (struct thread *t)
     }
     else
         list_push_back (&ready_list, &t->elem);
-
+   
+    thread_check_priority();
     intr_set_level (old_level);
 }
 
